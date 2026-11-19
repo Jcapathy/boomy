@@ -99,6 +99,15 @@ fn main() {
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
         println!("cargo:rustc-link-arg=/WX");
+        // tauri.windows.conf.json bundles the frozen agent, and tauri-build checks every
+        // resource exists on every build, even clippy and tests, which never freeze it. Debug
+        // builds run the agent from source, so an empty folder stands in for them; a release
+        // build still fails without the real one (`just app build` freezes it first).
+        if std::env::var("PROFILE").as_deref() != Ok("release") {
+            let agent = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                .join("../../agent/dist/bomby-agent");
+            std::fs::create_dir_all(agent).expect("couldn't create the agent's placeholder");
+        }
     }
     tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }
