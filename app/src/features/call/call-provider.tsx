@@ -313,16 +313,40 @@ function PinMicrophone() {
   const { room, local } = useSessionContext()
   const track = local.microphoneTrack?.publication.track?.mediaStreamTrack
   useEffect(() => {
-    const deviceId = track?.getSettings().deviceId
+    const settings = track?.getSettings()
     const chosen = room.getActiveDevice("audioinput")
     // Already on a specific device (pinned, or picked in the control bar): leave it.
-    if (!deviceId || (chosen && chosen !== "default")) return
-    void room.switchActiveDevice("audioinput", deviceId, true).then(
-      () => log(`mic pinned: ${JSON.stringify(track?.label)}`),
-      (e: unknown) => log(`mic pin failed: ${String(e)}`)
-    )
+    if (!settings?.deviceId || (chosen && chosen !== "default")) return
+    void realDevice(settings)
+      .then((deviceId) => {
+        if (!deviceId)
+          return log("mic not pinned: no device behind the default")
+        return room
+          .switchActiveDevice("audioinput", deviceId, true)
+          .then(() => log(`mic pinned: ${JSON.stringify(track?.label)}`))
+      })
+      .catch((e: unknown) => log(`mic pin failed: ${String(e)}`))
   }, [room, track])
   return null
+}
+
+/** Windows' webview reports the default mic as "default" (or "communications"), not its id.
+ * Pinning that alias would restart the track, which comes back as "default" again, without
+ * end; the real device is the one sharing its group. */
+const ALIASES = new Set(["default", "communications"])
+
+async function realDevice({
+  deviceId,
+  groupId,
+}: MediaTrackSettings): Promise<string | undefined> {
+  if (!deviceId || !ALIASES.has(deviceId)) return deviceId
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return devices.find(
+    (d) =>
+      d.kind === "audioinput" &&
+      d.groupId === groupId &&
+      !ALIASES.has(d.deviceId)
+  )?.deviceId
 }
 
 /**

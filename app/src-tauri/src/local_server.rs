@@ -194,7 +194,18 @@ fn new_secret() -> Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// `node_ip` keeps media on loopback; `tcp_port: 0` turns ICE over TCP off.
+/// Where media may flow. On macOS, `node_ip` keeps it on loopback. Windows won't route between
+/// loopback and a socket bound to the machine's own address, and the agent's WebRTC client
+/// binds only to network interfaces, so there media also answers on the machine's addresses.
+/// Packets between two of its own addresses never leave it, and Windows Firewall still decides
+/// whether anything else may reach that port.
+const MEDIA_IPS: &str = if cfg!(windows) {
+    ""
+} else {
+    "  node_ip: 127.0.0.1\n  ips:\n    includes: [\"127.0.0.1/32\"]\n"
+};
+
+/// Signalling stays on loopback; `tcp_port: 0` turns ICE over TCP off.
 fn config(signal: u16, media: u16) -> String {
     format!(
         "\
@@ -204,11 +215,8 @@ rtc:
   udp_port: {media}
   tcp_port: 0
   use_external_ip: false
-  node_ip: 127.0.0.1
   enable_loopback_candidate: true
-  ips:
-    includes: [\"127.0.0.1/32\"]
-logging:
+{MEDIA_IPS}logging:
   json: true
   level: info
 "
@@ -423,12 +431,15 @@ mod tests {
             "bind_addresses: [\"127.0.0.1\"]",
             "  udp_port: 41001",
             "  tcp_port: 0",
-            "  node_ip: 127.0.0.1",
-            "    includes: [\"127.0.0.1/32\"]",
+            "  enable_loopback_candidate: true",
             "  json: true",
         ] {
             assert!(config.lines().any(|l| l == line), "missing {line:?}");
         }
+        // Media is pinned to loopback except on Windows, where the agent couldn't reach it.
+        let pinned = config.lines().any(|l| l == "  node_ip: 127.0.0.1");
+        assert_eq!(pinned, !cfg!(windows));
+        assert_eq!(config.contains("127.0.0.1/32"), !cfg!(windows));
     }
 
     #[test]

@@ -86,6 +86,7 @@ Claude Code and Codex speak ACP through small adapters, which Boomy installs for
 1. Download `Boomy-setup.exe` from the [latest release](https://github.com/Jcapathy/boomy/releases/latest), once one is published.
 2. Run it. It installs for your user only, so it doesn't need administrator rights. SmartScreen will say the publisher is unknown, because the installer isn't code-signed yet: choose **More info**, then **Run anyway**.
 3. Open Boomy from the Start menu. The first run walks you through picking an agent and a voice model, and entering its key: [Gemini](https://aistudio.google.com/apikey), [OpenAI](https://platform.openai.com/api-keys) (paid tier) or [Rime](https://app.rime.ai/tokens).
+4. On your first call, Windows Security asks whether `livekit-server.exe` may use your network. Leave access off: calls only pass between programs on your computer, and that traffic isn't blocked.
 
 Boomy updates itself from this repo's releases. Each update is signed, and Boomy checks the signature before installing.
 
@@ -148,6 +149,7 @@ scripts/             LiveKit server download for Windows, version tooling
 For anyone comparing with Bomby, the main changes were:
 
 - **IPC:** loopback TCP with a shared secret instead of Unix domain sockets, between the Rust core and the Python agent.
+- **Call media:** the local LiveKit server answers on the computer's own addresses as well as loopback, because Windows won't route between the two and the agent's WebRTC client only uses network addresses. Signalling stays on loopback.
 - **Processes:** `CREATE_NO_WINDOW` and `taskkill /T` instead of process groups and signals, so no console windows flash up and child processes never outlive Boomy.
 - **Terminals:** PowerShell over ConPTY instead of a Unix shell over a pty.
 - **Discovery:** agents found through `PATH` and `PATHEXT` (`.exe`, `.cmd`, `.bat`), plus npm's and Scoop's install folders.
