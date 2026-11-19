@@ -1,0 +1,38 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# local
+.env
+
+# ACP adapters, installed and built by `just agent install`
+agent/adapters/node_modules/
+agent/adapters/bin/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+# The LiveKit server's source and Go caches (livekit.just)
+.cache/
+
+# Web research cache
+.firecrawl/
+
+# Reference checkouts (not ours)
+.scratch/
+
+# Agent skills each developer installs for themselves (`npx skills add`), not shipped with
+# the repo. .worktreeinclude copies them into new worktrees.
+.agents/skills/brand-guidelines/
+.agents/skills/tauri-v2/
+skills-lock.json
+
+# A Claude Code plugin's session state (oh-my-claudecode), never part of the repo.
+.omc/

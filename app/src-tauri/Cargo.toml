@@ -1,0 +1,69 @@
+[package]
+name = "boomy"
+version = "0.3.3"
+description = "Boomy, talk to your agents: the desktop app"
+authors = ["Ahmed Aburady"]
+license = "MIT"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# Only the `boomy` binary (main.rs) links it, so it's a plain Rust library, the default
+# crate type. Tauri's template adds `staticlib` and `cdylib` for iOS and Android, which
+# Bomby doesn't build for (docs/tauri-notes.md).
+name = "bomby_lib"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+keyring = "4.2"
+thiserror = "2"
+tauri-plugin-dialog = "2"
+rusqlite = { version = "0.41", features = ["bundled", "functions"] }
+livekit-api = { version = "0.10", default-features = false, features = ["access-token"] }
+livekit-protocol = "0.8.2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2.8"
+tauri-plugin-updater = "2.14"
+getrandom = "0.3"
+portable-pty = "0.9.0"
+git2 = { version = "0.21.0", default-features = false, features = ["vendored-libgit2"] }
+notify-debouncer-mini = "0.7.0"
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["net", "io-util", "time", "sync", "macros", "rt", "rt-multi-thread"] }
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+unicode-normalization = "0.1.26"
+caseless = "0.2.2"
+# Export Diagnostics (diagnostics.rs): the zip, its local time stamp and taking secrets out.
+zip = { version = "9.4.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+regex = "1.13.1"
+aho-corasick = "1.1.5"
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Stopping the agent worker and its children as a process group.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# The mock runtime (`tauri::test`), so tests run the core's commands on a real in-memory
+# database without a window (src/testing.rs).
+tauri = { version = "2", features = ["test"] }
+ts-rs = "12.0.1"

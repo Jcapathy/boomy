@@ -1,0 +1,51 @@
+# Ship the agent and the adapter as sidecars
+
+Status: accepted, 2026-11-04. Proposed 2026-11-03. The adapter part is superseded by [install-adapters-on-setup.md](install-adapters-on-setup.md): adapters are installed on the user's Mac, not shipped.
+
+## Context
+
+A call runs two programs next to the app: the Python voice agent (`agent/`) and the `claude-agent-acp` adapter (Node). Users shouldn't need Python, uv, Node or mise. Users bring Claude Code themselves ([users-bring-their-own-keys-and-claude.md](users-bring-their-own-keys-and-claude.md)).
+
+## Decision
+
+- Bundle both programs per OS and architecture: the adapter as a Tauri sidecar (`bundle.externalBin`), the agent as a folder in app resources.
+- **Adapter**: compiled into one binary with `bun build --compile`, leaving out the Agent SDK's native `claude` binary (`@anthropic-ai/claude-agent-sdk-<platform>`, 305 MB in 0.100.0 on darwin-arm64). The app sets `CLAUDE_CODE_EXECUTABLE` to the user's own `claude`; adapter 0.100.0 reads it first in `claudeCliPath()` (`dist/acp-agent.js`).
+- **Agent**: frozen with PyInstaller, as a folder (`--onedir`), shipped in the app's resources and started by path (chosen by the prototypes below).
+- The app starts the agent for a call with the LiveKit and voice provider keys from the keychain as environment variables, and the adapter path. Keys never touch disk.
+
+## Prototype results (2026-11-04, macOS 27, arm64)
+
+**Adapter: passes.** `bun build --compile --minify` on `@agentclientprotocol/claude-agent-acp` 0.100.0 installed with `--omit optional` gives one 91 MB binary (mostly the bun runtime; the SDK's native `claude` is 305 MB). With `CLAUDE_CODE_EXECUTABLE` set to the user's `claude` (2.1.317) it initializes in 0.1 s, pushes `_auth/status_update` with the user's account and plan, and opens a session in 0.9 s, the same as the Node adapter. No prompt was sent.
+
+**Agent with PyInstaller 6.22.3: works, only as a folder.** Entry `claudible_agent.py` (`multiprocessing.freeze_support()`, then the agent's CLI), `--collect-all livekit --collect-submodules livekit.plugins --collect-data google.genai --add-data prompts`. Imports, the Google plugin and `liblivekit_ffi` load, and the CLI runs.
+
+| Build | Size | First start | Later starts |
+| --- | --- | --- | --- |
+| `--onefile` | 112 MB | 26 s | 18 s, every time |
+| `--onedir` | 190 MB folder | 17 s | 0.8 s |
+
+A one-file build unpacks to a new temp folder on every start, so macOS checks every native library again each time; a folder build pays that once. So the agent ships as a folder (launched by path from the app's resources), not as a single `externalBin`.
+
+**Agent with Nuitka 4.3.4: stopped.** `--standalone` compiled 3,778 modules to C; after 25 minutes it was still on one file, `google.genai.types` (Nuitka itself warned "Slow C compilation detected ... scalability problem" at 360 s). A build that long per platform and per release is a poor fit, and PyInstaller already meets the bar, so we stopped it without a size or start time.
+
+**Choice: PyInstaller, one folder.** 40 s builds, 0.8 s starts, everything loads. Revisit Nuitka only if the folder size or start time becomes a problem.
+
+## Built (2026-11-05, PyInstaller 6.22.3, livekit-agents 1.8.10)
+
+- `just agent freeze` builds `agent/dist/bomby-agent/` from `agent/bundle.py` in about 30 s: 190 MB, the same as the prototype.
+- The frozen probe answers in 0.8 s; its first start after a build took 26 s while macOS checked each native library.
+- The frozen worker spawns its idle job process, which LiveKit starts with `multiprocessing` "spawn" on macOS (`worker.py`, `multiprocessing_context`). It initialized in 1.3 s, because `bundle.py` calls `multiprocessing.freeze_support()` first.
+- The lifeline still stops the whole process group when the app's pipe closes.
+- Frozen, python-dotenv looks for `.env` from the current folder up through every parent (1.2.4, `find_dotenv`), so the packaged agent never loads one (`agent/dev_env.py`).
+
+### Signing (2026-11-05)
+
+- `just agent sign` signs the program and every Mach-O file in the folder (104 libraries) with the Developer ID, hardened runtime and a secure timestamp. Tauri doesn't sign files it bundles.
+- **No entitlements.** Under hardened runtime, the agent's Python (uv's CPython 3.13.16, libffi built into `libpython3.13.dylib`) ran ctypes and cffi callbacks and started LiveKit's FFI with no executable-memory entitlement. Library validation needs every library signed with the program's Team ID: an ad-hoc signed copy fails to load `libpython3.13.dylib` ("different Team IDs"). One Developer ID signature passes.
+- Builds are signed and notarized on GitHub's macOS runners, never on a developer's Mac ([releasing.md](../releasing.md)).
+
+## Consequences
+
+- One app download, for Apple Silicon Macs (owner, 2026-11-05), with no runtimes to install.
+- The agent's `agent/.env` stays a dev-only path; in the app, keys come from the keychain.
+- The frozen agent has two entries: the worker (`agent.py start`) and the setup probe (`probe.py`, [decision](check-agent-setup-with-an-acp-probe.md)). The bundle's entry script dispatches on its first argument, and the core runs it with `probe` for Settings.

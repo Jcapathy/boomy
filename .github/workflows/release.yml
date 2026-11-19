@@ -1,0 +1,129 @@
+# Builds Boomy for Windows (x64), signs the update with the updater key and attaches the
+# installer and the update (latest.json) to a draft GitHub release. Start it from the Actions
+# tab (Release, Run workflow); nothing else starts it. Publishing the draft creates its tag,
+# so a tag trigger would build every release twice.
+#
+# Secrets, in the `release` environment: TAURI_SIGNING_PRIVATE_KEY (the contents of the
+# updater key whose public half is in tauri.windows.conf.json) and, if the key has one,
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD. The installer itself isn't Authenticode-signed, so
+# SmartScreen warns on first run.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build for Windows x64
+    runs-on: windows-2025
+    permissions:
+      contents: write # create the draft release and upload the installer
+    environment: release
+    timeout-minutes: 60
+    env:
+      OUT: app/src-tauri/target/release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No caches anywhere in this workflow: what gets released is built from scratch, never
+      # from files another workflow could have left (zizmor's cache-poisoning audit).
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          install_args: rust bun uv just
+          cache: false
+
+      - name: Install the frontend's dependencies
+        run: just app install
+
+      # The core embeds these files, so a release must never ship one the agent's
+      # definitions have moved past (docs/architecture.md, Voice providers and Extensions).
+      - name: Check the voice providers' and extensions' catalogues are current
+        run: |
+          just agent providers-current
+          just agent extensions-current
+
+      # The release is named after tauri.conf.json's version; the crate, the agent and the
+      # version Boomy reports to coding agents must say the same.
+      - name: Check every place carries the same version
+        run: just lint-versions
+
+      # Freezes the agent, then Tauri builds the app and the NSIS installer, and signs the
+      # installer with the updater key (.exe.sig), which installed copies check.
+      - name: Build the app and the installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          just app build --config src-tauri/tauri.release.conf.json
+          setup=$(ls "$OUT"/bundle/nsis/*-setup.exe)
+          [[ -s $setup.sig ]] || { echo "::error::No update signature: is TAURI_SIGNING_PRIVATE_KEY set?"; exit 1; }
+          echo "SETUP=$setup" >> "$GITHUB_ENV"
+
+      - name: Check the frozen agent runs
+        run: just agent check-frozen "$PWD/$OUT/agent/bomby-agent.exe"
+
+      - name: Check the bundled LiveKit server runs
+        run: '"$OUT/livekit-server.exe" --version'
+
+      # The app must open before anything is released: its window renders and the first
+      # agents look finishes, with its own temp folder, no keys, no agents and no network.
+      - name: Check the app opens
+        run: just app smoke "$PWD/$OUT/boomy.exe"
+
+      # What installed copies read to find this version once the release is published
+      # (plugins.updater.endpoints in tauri.windows.conf.json). GitHub turns spaces in asset
+      # names into dots, so the URL uses the installer's name as uploaded.
+      - name: Write latest.json
+        run: |
+          version=$(jq -r .version app/src-tauri/tauri.conf.json)
+          name=$(basename "$SETUP" | tr ' ' '.')
+          jq -n \
+            --arg version "$version" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg signature "$(cat "$SETUP.sig")" \
+            --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/$name" \
+            '{version: $version, pub_date: $date, platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
+            > "$RUNNER_TEMP/latest.json"
+          cat "$RUNNER_TEMP/latest.json"
+
+      # Uploads to the version's draft release, made here if it isn't there yet. A published
+      # release is never changed: set a new one with `just version` instead.
+      - name: Attach the installer and the update to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(jq -r .version app/src-tauri/tauri.conf.json)
+          tag="v$version"
+          # The installer twice: by version, and as Boomy-setup.exe, a name that never
+          # changes, so releases/latest/download/Boomy-setup.exe is always the newest.
+          cp "$SETUP" "$RUNNER_TEMP/Boomy-setup.exe"
+          files=("$SETUP" "$RUNNER_TEMP/Boomy-setup.exe" "$RUNNER_TEMP/latest.json")
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "::error::$tag is already published; set a new version with just version"
+              exit 1
+            fi
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            # No --target: pinning a commit that changes workflows needs a permission this
+            # token can't have (cli/cli#9514). The draft takes main, so main must be what was built.
+            head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::error::main moved to $head during the build of $GITHUB_SHA; run the workflow again"
+              exit 1
+            fi
+            gh release create "$tag" "${files[@]}" --draft --title "Boomy $version" \
+              --generate-notes
+          fi

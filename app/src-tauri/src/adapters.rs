@@ -1,0 +1,468 @@
+//! The ACP adapters for agents that don't speak ACP themselves (Claude Code, Codex),
+//! installed into the app's own folder when the user sets one up
+//! (docs/decisions/install-adapters-on-setup.md). Boomy ships only their lockfile
+//! (`agent/adapters/`): the user's computer downloads bun and the packages from npm, and compiles
+//! each adapter into one program, as `just agent install` does in the repo.
+//!
+//! The voice agent finds them through `BOMBY_ADAPTERS` (`agent::command`). An app update
+//! with a new lockfile installs them again in the background at launch.
+
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+use tauri::{AppHandle, Runtime};
+
+use crate::agents;
+use crate::error::{Error, Result};
+use crate::process;
+use crate::sync;
+
+const PACKAGE: &str = include_str!("../../../agent/adapters/package.json");
+const LOCKFILE: &str = include_str!("../../../agent/adapters/bun.lock");
+
+/// The bun that installs and compiles them: the version `mise.toml` pins for the repo.
+const BUN_VERSION: &str = "1.4.4";
+/// bun's release zips for this system, by CPU, with their SHA-256 from the release's
+/// SHASUMS256.txt.
+#[cfg(not(windows))]
+const BUN: &[(&str, &str, &str)] = &[
+    (
+        "aarch64",
+        "bun-darwin-aarch64",
+        "c240d7f0ccb90c263a849fcdb09b7ee62630d921348ed6aafda86b9d577bc510",
+    ),
+    (
+        "x86_64",
+        "bun-darwin-x64",
+        "50a3491f73abc2fe81673171a85762d3bc2cc1680ccecadd983de99adf77977e",
+    ),
+];
+#[cfg(windows)]
+const BUN: &[(&str, &str, &str)] = &[
+    (
+        "aarch64",
+        "bun-windows-aarch64",
+        "2d57a0eec0cb44d95c918c3f9734f60455a1306ae5085d76fc68f44e3ee30d09",
+    ),
+    (
+        "x86_64",
+        "bun-windows-x64",
+        "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5",
+    ),
+];
+/// What a program's name ends with: `.exe` on Windows, nothing elsewhere.
+const EXE: &str = std::env::consts::EXE_SUFFIX;
+
+// Slow is fine, a stall isn't (see `download`); this only stops one that never ends.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
+const FAILED: &str = "Try again in a minute!";
+const STEP_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The install's log, in the adapters' folder.
+pub const LOG_FILE: &str = "install.log";
+
+static DIR: OnceLock<PathBuf> = OnceLock::new();
+static INSTALLING: Mutex<()> = Mutex::new(());
+
+/// Where the adapters live: `<app data>/adapters`. Set once at launch.
+pub fn init(app_data: &Path) {
+    let _ = DIR.set(app_data.join("adapters"));
+}
+
+/// The folder of built adapters the voice agent runs, once `init` ran.
+pub fn bin_dir() -> Option<PathBuf> {
+    DIR.get().map(|dir| dir.join("bin"))
+}
+
+/// The adapters' install log, once `init` ran: for Export Diagnostics (`diagnostics`).
+pub fn install_log() -> Option<PathBuf> {
+    DIR.get().map(|dir| dir.join(LOG_FILE))
+}
+
+/// Whether the adapters were built from an older lockfile than this app ships.
+fn stale(dir: &Path) -> bool {
+    let built = fs::read_to_string(dir.join("bin").join("bun.lock")).ok();
+    built.is_some_and(|built| built != LOCKFILE)
+}
+
+/// Rebuilds adapters left from an older version of the app, in the background.
+pub fn update_in_background<R: Runtime>(app: &AppHandle<R>) {
+    let Some(dir) = DIR.get().filter(|dir| stale(dir)).cloned() else {
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _one = sync::lock(&INSTALLING);
+        if install(&dir).is_err() {
+            // A half-updated set must not run; Settings offers Set up again.
+            let _ = fs::remove_dir_all(dir.join("bin"));
+        }
+        agents::refresh_after_change(&app);
+    });
+}
+
+/// Installs every adapter in the lockfile, then looks for the agents again so the probe
+/// sees them. One install runs at a time.
+#[tauri::command]
+pub async fn install_adapters<R: Runtime>(app: AppHandle<R>) -> Result<()> {
+    let dir = DIR
+        .get()
+        .cloned()
+        .ok_or_else(|| Error::Invalid("The app isn't ready yet.".into()))?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<()> {
+        let _one = sync::lock(&INSTALLING);
+        install(&dir)?;
+        agents::refresh_after_change(&app);
+        Ok(())
+    })
+    .await?
+}
+
+/// Downloads bun the first time, then the adapters from npm, and compiles each into one
+/// program.
+fn install(dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)?;
+    let log = dir.join(LOG_FILE);
+    let bun = runtime(dir, &log)?;
+
+    let work = dir.join("packages");
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work)?;
+    fs::write(work.join("package.json"), PACKAGE)?;
+    fs::write(work.join("bun.lock"), LOCKFILE)?;
+    let mut packages = Command::new(&bun);
+    // Optional packages hold the agents' own bundled binaries; the adapters run the user's.
+    packages
+        .args(["install", "--frozen-lockfile", "--omit", "optional"])
+        .current_dir(&work)
+        .env("BUN_INSTALL_CACHE_DIR", dir.join("cache"));
+    run(packages, &log)?;
+
+    let staging = dir.join("bin.new");
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)?;
+    for (name, entry) in entries(&work)? {
+        let mut build = Command::new(&bun);
+        build
+            .args(["build", "--compile", "--minify"])
+            .arg(&entry)
+            .arg("--outfile")
+            .arg(staging.join(format!("{name}{EXE}")))
+            .current_dir(&work);
+        run(build, &log)?;
+    }
+    fs::write(staging.join("bun.lock"), LOCKFILE)?;
+    let bin = dir.join("bin");
+    let _ = fs::remove_dir_all(&bin);
+    fs::rename(&staging, &bin)?;
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(dir.join("cache"));
+    Ok(())
+}
+
+/// The bun in `<dir>/runtime`, downloaded and checked against its SHA-256 the first time.
+fn runtime(dir: &Path, log: &Path) -> Result<PathBuf> {
+    let bun = dir.join("runtime").join(format!("bun{EXE}"));
+    let mut version = Command::new(&bun);
+    version.arg("--version");
+    process::no_window(&mut version);
+    let current = version
+        .output()
+        .ok()
+        .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == BUN_VERSION);
+    if current {
+        return Ok(bun);
+    }
+
+    let (_, asset, sha256) = BUN
+        .iter()
+        .find(|(arch, _, _)| *arch == std::env::consts::ARCH)
+        .ok_or_else(|| Error::Invalid("This computer's processor isn't supported.".into()))?;
+    let zip = dir.join("bun.zip");
+    let url =
+        format!("https://github.com/oven-sh/bun/releases/download/bun-v{BUN_VERSION}/{asset}.zip");
+    let status = dir.join("bun.status");
+    let _ = fs::remove_file(&zip);
+    let downloaded = run_for(download(&url, &zip), log, DOWNLOAD_TIMEOUT, Some(&status));
+    let _ = fs::remove_file(&status);
+    downloaded?;
+    if sha256_of(&zip)? != *sha256 {
+        let _ = fs::remove_file(&zip);
+        let mut out = File::options().create(true).append(true).open(log)?;
+        let _ = writeln!(out, "the bun download didn't match its checksum");
+        return Err(Error::Invalid(FAILED.into()));
+    }
+
+    let unpacked = dir.join("runtime.new");
+    let _ = fs::remove_dir_all(&unpacked);
+    let unzip = if cfg!(windows) {
+        // Windows 10 and later ship bsdtar, which reads zips; it needs the folder made.
+        fs::create_dir_all(&unpacked)?;
+        let mut tar = Command::new("tar");
+        tar.arg("-xf").arg(&zip).arg("-C").arg(&unpacked);
+        tar
+    } else {
+        let mut ditto = Command::new("ditto");
+        ditto.args(["-x", "-k"]).arg(&zip).arg(&unpacked);
+        ditto
+    };
+    run(unzip, log)?;
+    let runtime = dir.join("runtime");
+    let _ = fs::remove_dir_all(&runtime);
+    fs::create_dir_all(&runtime)?;
+    fs::rename(unpacked.join(asset).join(format!("bun{EXE}")), &bun)?;
+    let _ = fs::remove_dir_all(&unpacked);
+    let _ = fs::remove_file(&zip);
+    Ok(bun)
+}
+
+/// curl fetching `url` into `zip`, its HTTP code on stdout. It gives up on a stall (under
+/// 1 KB/s for 30 s), not on a slow line, and retries a stall, a timeout, 408, 429 and 5xx.
+fn download(url: &str, zip: &Path) -> Command {
+    let mut curl = Command::new("curl");
+    curl
+        // curl 8.7 won't retry an HTTP error over HTTP/2, which GitHub uses.
+        .args(["-fsSL", "--http1.1", "--retry", "3"])
+        .args(["--speed-limit", "1024", "--speed-time", "30"])
+        .args(["-w", "%{http_code}", "-o"])
+        .arg(zip)
+        .arg(url);
+    curl
+}
+
+/// The file's SHA-256 in lowercase hex, read here rather than by `shasum`, which Windows
+/// doesn't have.
+fn sha256_of(file: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut File::open(file)?, &mut hasher)?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// A package manifest, parsed; `what` names it in the error.
+fn json(text: &str, what: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(text).map_err(|e| Error::Invalid(format!("Couldn't read {what}: {e}")))
+}
+
+/// Each adapter in the lockfile's package list: the program it installs, and its script.
+fn entries(work: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let package = json(PACKAGE, "agent/adapters/package.json")?;
+    let dependencies = package["dependencies"]
+        .as_object()
+        .ok_or_else(|| Error::Invalid("agent/adapters/package.json has no dependencies".into()))?;
+    let mut entries = Vec::new();
+    for name in dependencies.keys() {
+        let root = work.join("node_modules").join(name);
+        let manifest = json(
+            &fs::read_to_string(root.join("package.json"))?,
+            &format!("{name}'s package.json"),
+        )?;
+        let bins: Vec<(String, String)> = match &manifest["bin"] {
+            serde_json::Value::String(path) => {
+                let program = name.rsplit('/').next().unwrap_or(name).to_owned();
+                vec![(program, path.clone())]
+            }
+            serde_json::Value::Object(map) => map
+                .iter()
+                .filter_map(|(program, path)| Some((program.clone(), path.as_str()?.to_owned())))
+                .collect(),
+            _ => Vec::new(),
+        };
+        entries.extend(
+            bins.into_iter()
+                .map(|(program, path)| (program, root.join(path))),
+        );
+    }
+    Ok(entries)
+}
+
+fn run(command: Command, log: &Path) -> Result<()> {
+    run_for(command, log, STEP_TIMEOUT, None)
+}
+
+/// Runs `command` with its errors appended to `log`, killing it after `timeout`. Its output
+/// goes to `status` when given (curl's HTTP code), else to `log`. A failure is `FAILED`,
+/// with the HTTP code when there is one.
+fn run_for(
+    mut command: Command,
+    log: &Path,
+    timeout: Duration,
+    status: Option<&Path>,
+) -> Result<()> {
+    let out = File::options().create(true).append(true).open(log)?;
+    process::no_window(&mut command);
+    let stdout = match status {
+        Some(path) => File::create(path)?,
+        None => out.try_clone()?,
+    };
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(out)
+        .spawn()?;
+    let exit = process::wait_timeout(&mut child, timeout)?;
+    if exit.is_none() {
+        process::kill(&mut child);
+    }
+    match exit {
+        Some(exit) if exit.success() => Ok(()),
+        Some(exit) => Err(Error::Invalid(failure(status, exit.code()))),
+        None => Err(Error::Invalid(format!("{FAILED} (too slow)"))),
+    }
+}
+
+/// curl's exit code for a timeout, a stall included.
+const CURL_TIMED_OUT: i32 = 28;
+
+/// `FAILED`, with the HTTP error, "no connection" when nothing answered, or "too slow".
+fn failure(status: Option<&Path>, exit: Option<i32>) -> String {
+    let code = status
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|code| code.trim().to_owned())
+        .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()));
+    match code.as_deref() {
+        Some(code) if code.starts_with('4') || code.starts_with('5') => {
+            format!("{FAILED} ({code})")
+        }
+        _ if status.is_some() && exit == Some(CURL_TIMED_OUT) => format!("{FAILED} (too slow)"),
+        Some("000") => format!("{FAILED} (no connection)"),
+        _ => FAILED.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_download_says_its_http_code_or_that_nothing_answered() {
+        let dir = std::env::temp_dir().join(format!("bomby-failure-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (log, status) = (dir.join(LOG_FILE), dir.join("status"));
+        let fail = |printed: &str| {
+            let mut curl = Command::new("sh");
+            curl.args(["-c", &format!("printf {printed}; exit 22")]);
+            run_for(curl, &log, STEP_TIMEOUT, Some(&status))
+                .unwrap_err()
+                .to_string()
+        };
+
+        assert!(fail("504").ends_with("Try again in a minute! (504)"));
+        assert!(fail("000").ends_with("Try again in a minute! (no connection)"));
+        let mut stalled = Command::new("sh");
+        stalled.args(["-c", "printf 302; exit 28"]);
+        let message = run_for(stalled, &log, STEP_TIMEOUT, Some(&status)).unwrap_err();
+        assert!(
+            message
+                .to_string()
+                .ends_with("Try again in a minute! (too slow)")
+        );
+        assert!(
+            run(Command::new("false"), &log)
+                .unwrap_err()
+                .to_string()
+                .ends_with("minute!")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_slow_download_runs_on_and_a_stalled_one_is_retried() {
+        let curl = download("https://example.com/bun.zip", Path::new("/tmp/bun.zip"));
+        let args: Vec<_> = curl.get_args().map(|a| a.to_string_lossy()).collect();
+        let after = |flag: &str| args.iter().position(|a| a == flag).map(|i| &args[i + 1]);
+
+        assert!(
+            !args.iter().any(|a| a == "--max-time"),
+            "no limit on a slow line"
+        );
+        assert_eq!(after("--speed-limit").map(|a| a.as_ref()), Some("1024"));
+        assert_eq!(after("--speed-time").map(|a| a.as_ref()), Some("30"));
+        assert_eq!(after("--retry").map(|a| a.as_ref()), Some("3"));
+    }
+
+    /// The whole install, for real: bun from GitHub, the packages from npm. Run it by hand
+    /// (`cargo test installs_the_adapters -- --ignored`) when changing how it installs.
+    #[test]
+    #[ignore = "downloads bun and the adapters' packages"]
+    fn installs_the_adapters() {
+        let dir = std::env::temp_dir().join(format!("bomby-install-{}", std::process::id()));
+        install(&dir).unwrap_or_else(|e| {
+            panic!(
+                "{e}: {}",
+                fs::read_to_string(dir.join(LOG_FILE)).unwrap_or_default()
+            )
+        });
+        for adapter in ["claude-agent-acp", "codex-acp"] {
+            let program = dir.join("bin").join(format!("{adapter}{EXE}"));
+            assert!(program.is_file(), "{} wasn't built", program.display());
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn checks_a_files_sha256() {
+        let file = std::env::temp_dir().join(format!("bomby-sha-{}", std::process::id()));
+        fs::write(&file, "abc").unwrap();
+        assert_eq!(
+            sha256_of(&file).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        fs::remove_file(&file).unwrap();
+    }
+
+    #[test]
+    fn knows_bun_for_this_computer() {
+        assert!(
+            BUN.iter()
+                .any(|(arch, _, _)| *arch == std::env::consts::ARCH)
+        );
+    }
+
+    #[test]
+    fn finds_each_adapter_program_in_its_package() {
+        let work = std::env::temp_dir().join(format!("bomby-adapters-{}", std::process::id()));
+        let package = work.join("node_modules/@agentclientprotocol/codex-acp");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"bin": {"codex-acp": "dist/index.js"}}"#,
+        )
+        .unwrap();
+        let claude = work.join("node_modules/@agentclientprotocol/claude-agent-acp");
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(claude.join("package.json"), r#"{"bin": "dist/index.js"}"#).unwrap();
+
+        let mut found = entries(&work).unwrap();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                ("claude-agent-acp".into(), claude.join("dist/index.js")),
+                ("codex-acp".into(), package.join("dist/index.js")),
+            ]
+        );
+        fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[test]
+    fn adapters_built_from_another_lockfile_are_stale() {
+        let dir = std::env::temp_dir().join(format!("bomby-stale-{}", std::process::id()));
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        assert!(!stale(&dir));
+        fs::write(dir.join("bin/bun.lock"), "older").unwrap();
+        assert!(stale(&dir));
+        fs::write(dir.join("bin/bun.lock"), LOCKFILE).unwrap();
+        assert!(!stale(&dir));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}

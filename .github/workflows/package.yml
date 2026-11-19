@@ -1,0 +1,75 @@
+# Builds the app as a release would, with the installer, unsigned, checks the frozen agent
+# inside it runs and opens the app (just app smoke): catches a PyInstaller or bundling break,
+# or a launch that hangs, before release day. Only for changes that can cause one, so it isn't
+# a required check. Pull requests only: a push to main was checked on its pull request, and
+# the Release workflow builds the app anyway. Update signing: release.yml.
+name: Package
+
+on:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "app/**"
+      - "scripts/**"
+      - "justfile"
+      - "*.just"
+      - "mise.toml"
+      - ".github/workflows/package.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: package-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: package
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    env:
+      OUT: app/src-tauri/target/release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          install_args: rust bun uv just
+
+      # As in ci.yml: the LiveKit server changes only with livekit.just or its script.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/src-tauri/binaries
+          key: livekit-server-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('livekit.just', 'scripts/livekit-server-windows.ps1') }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app/src-tauri -> target
+
+      - run: just app install
+
+      # No TAURI_SIGNING_* variables, so no update file; the installer is release.yml's too,
+      # but building it here catches an NSIS break.
+      - name: Build the app and its installer, with the frozen agent
+        run: just app build
+
+      - name: Check the frozen agent runs
+        run: just agent check-frozen "$PWD/$OUT/agent/bomby-agent.exe"
+
+      - name: Check the bundled LiveKit server runs
+        run: '"$OUT/livekit-server.exe" --version'
+
+      # Opens the built app with its own temp folder, no keys, no agents and no network,
+      # and fails unless the window renders and the first agents look finishes. Boomy quits
+      # by itself once both have said so.
+      - name: Check the app opens
+        run: just app smoke "$PWD/$OUT/boomy.exe"

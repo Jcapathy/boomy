@@ -1,0 +1,431 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* The wordmark and display headlines (docs/brand.md). Only Bold ships. */
+@import "@fontsource/bricolage-grotesque/700.css";
+
+@custom-variant dark (&:is(.dark *));
+/* index.html sets data-platform before first paint; macOS has the overlay title bar. */
+@custom-variant macos (&:is([data-platform="macos"] *));
+
+@theme inline {
+  --font-heading: "Bricolage Grotesque", var(--font-sans);
+  --color-claude: var(--claude);
+  --color-change-added: var(--change-added);
+  --color-change-modified: var(--change-modified);
+  --color-change-deleted: var(--change-deleted);
+  --color-livekit-cloud: var(--livekit-cloud);
+  --color-highlighter: var(--highlighter);
+  --color-highlighter-foreground: var(--highlighter-foreground);
+  --color-claude-foreground: var(--claude-foreground);
+  /* The OS font, as native apps use: SF Pro on macOS, Segoe UI on Windows. */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+  /* Height of the title bar rows (sidebar top strip, main header): h-titlebar.
+       tauri.conf.json trafficLightPosition centers the macOS buttons in this row. */
+  --spacing-titlebar: 2.5rem;
+  /* The mascot's loops (components/mascot.tsx, Paper board "05 Motion"): think drift and the
+     one fail shake. Sine for loops, ease-out for one-offs, nothing overshoots. */
+  --animate-mascot-wander: mascot-wander 2.4s ease-in-out infinite;
+  --animate-mascot-shake: mascot-shake 300ms ease-out 1;
+  /* Done's hop (Paper "05 Motion": up 6px in 160ms, then down), once every 2.8s. */
+  --animate-mascot-hop: mascot-hop 2.8s ease-in-out infinite;
+  @keyframes mascot-hop {
+    0%,
+    11.4%,
+    100% {
+      transform: translateY(0);
+    }
+    5.7% {
+      transform: translateY(-6px);
+    }
+  }
+  @keyframes mascot-wander {
+    0%,
+    100% {
+      transform: translate(5px, -6px);
+    }
+    25% {
+      transform: translate(7px, -5px);
+    }
+    50% {
+      transform: translate(4px, -8px);
+    }
+    75% {
+      transform: translate(3px, -5px);
+    }
+  }
+  @keyframes mascot-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    25% {
+      transform: translateX(-4px);
+    }
+    50% {
+      transform: translateX(4px);
+    }
+    75% {
+      transform: translateX(-2px);
+    }
+  }
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  /* Type roles beyond Tailwind's scale (Paper board "09 Type"; docs/brand.md). Each is
+     named so it doesn't clash with a colour; src/lib/cn.ts teaches cn() these names. */
+  --text-label: 11px;
+  --text-label--line-height: 14px;
+  --text-label--letter-spacing: 0.08em;
+  --text-lead: 15px;
+  --text-lead--line-height: 22px;
+  --text-title: 34px;
+  --text-title--line-height: 38px;
+  --text-title--letter-spacing: -0.03em;
+  --text-display: 40px;
+  --text-display--line-height: 44px;
+  --text-display--letter-spacing: -0.03em;
+  /* Elevation (Paper board "11 Elevation"): the values swap per theme in :root and .dark. */
+  --shadow-card: var(--elevation-card);
+  --shadow-float: var(--elevation-float);
+  --shadow-primary: var(--elevation-primary);
+}
+
+:root {
+  /* Boomy colours, from the Paper file (board "07 Colour in UI"); see docs/brand.md.
+     Ink carries the UI, highlighter is the one loud moment, bubblegum means Claude. */
+  --background: #ffffff;
+  --foreground: #121212;
+  --card: #ffffff;
+  --card-foreground: #121212;
+  --popover: #ffffff;
+  --popover-foreground: #121212;
+  --primary: #121212;
+  --primary-foreground: #3ae8ff;
+  --secondary: #f4f4f1;
+  --secondary-foreground: #121212;
+  --muted: #f4f4f1;
+  --muted-foreground: #6b6b6b;
+  /* Hover and selection are a quiet grey (owner's call, 2026-11-03): the highlighter
+     stays the one loud moment, on primary actions. */
+  --accent: #f4f4f1;
+  --accent-foreground: #121212;
+  --destructive: #d92d20;
+  --border: #e4e4e4;
+  --input: #e4e4e4;
+  --ring: #121212;
+  --radius: 0.625rem;
+  --sidebar: #f4f4f1;
+  --sidebar-foreground: #121212;
+  --sidebar-primary: #121212;
+  --sidebar-primary-foreground: #3ae8ff;
+  --sidebar-accent: #e8e8e4;
+  --sidebar-accent-foreground: #121212;
+  --sidebar-border: #e4e4e4;
+  --sidebar-ring: #121212;
+  /* Claude sessions and working indicators. A fill only; text on it is ink. */
+  --claude: #ff9bd2;
+  --claude-foreground: #121212;
+  /* The brand's highlighter in both themes, for "ready" and other good-news marks. A fill
+     only, ink on it (1.1:1 on white, so never as text or a bare icon). */
+  --highlighter: #3ae8ff;
+  --highlighter-foreground: #121212;
+  /* The mascot with depth (Paper "splash"): an ink bubble lit from above, highlighter eyes. */
+  --mascot-body-top: #3a3a3a;
+  --mascot-body-middle: #161616;
+  --mascot-body-bottom: #0a0a0a;
+  --mascot-eye-top: #9af3ff;
+  --mascot-eye-bottom: #1fd3f0;
+  --mascot-lid: #3ae8ff;
+  /* Failed eyes: bubblegum on the ink bubble. */
+  --mascot-failed: var(--claude);
+  --mascot-rim: rgb(255 255 255 / 0.35);
+  --mascot-catchlight: rgb(255 255 255 / 0.8);
+  --mascot-shadow: drop-shadow(0 10px 14px rgb(0 40 50 / 0.3));
+  /* Claude's own colours, for its tile on the splash (Paper "splash"). */
+  --agent-claude: #d97757;
+  --agent-claude-tile: #fbf1ec;
+  /* LiveKit Cloud's choice on the splash, apart from Local's white logo. */
+  --livekit-cloud: #3b8bff;
+  /* Elevation: card for the splash cards, float for lists, popovers and select content,
+     primary for the home's main button. Settings stays flat, with borders only. */
+  --elevation-card:
+    0 1px 2px rgb(18 18 18 / 0.04), 0 12px 32px -12px rgb(18 18 18 / 0.12);
+  --elevation-float:
+    0 0 0 1px var(--border), 0 20px 40px -24px rgb(18 18 18 / 0.18);
+  --elevation-primary: 0 10px 24px -12px rgb(18 18 18 / 0.5);
+  /* The user's bubble in the call transcript. */
+  --bubble-user: var(--foreground);
+  /* The workspace terminal's 16 ANSI colours, for white: ink, then readable mid tones,
+     with highlighter's place (yellow) taken by an amber that shows on white. */
+  --terminal-ansi-0: #121212;
+  --terminal-ansi-1: #c62a1f;
+  --terminal-ansi-2: #2f7d32;
+  --terminal-ansi-3: #9a6a00;
+  --terminal-ansi-4: #2f5fc4;
+  --terminal-ansi-5: #a3358f;
+  --terminal-ansi-6: #1f7a85;
+  --terminal-ansi-7: #6b6b6b;
+  --terminal-ansi-8: #8a8a8a;
+  --terminal-ansi-9: #d92d20;
+  --terminal-ansi-10: #3c9a40;
+  --terminal-ansi-11: #b07d00;
+  --terminal-ansi-12: #3b74e0;
+  --terminal-ansi-13: #bf46a8;
+  --terminal-ansi-14: #23909c;
+  --terminal-ansi-15: #121212;
+  --terminal-cursor: #121212;
+  /* A file's git status in the workspace panel (letters, counts): readable on white. */
+  --change-added: #2f7d32;
+  --change-modified: #9a6a00;
+  --change-deleted: #c62a1f;
+  --terminal-selection: rgb(18 18 18 / 0.14);
+}
+
+.dark {
+  --background: #121212;
+  --foreground: #f5f5f2;
+  --card: #1a1a1a;
+  --card-foreground: #f5f5f2;
+  --popover: #1a1a1a;
+  --popover-foreground: #f5f5f2;
+  --primary: #3ae8ff;
+  --primary-foreground: #121212;
+  --secondary: #1f1f1f;
+  --secondary-foreground: #f5f5f2;
+  --muted: #1f1f1f;
+  --muted-foreground: #a3a3a3;
+  --accent: #1f1f1f;
+  --accent-foreground: #f5f5f2;
+  --destructive: #f97066;
+  --border: #2a2a2a;
+  --input: #2a2a2a;
+  --ring: #3ae8ff;
+  --sidebar: #161616;
+  --sidebar-foreground: #f5f5f2;
+  --sidebar-primary: #3ae8ff;
+  --sidebar-primary-foreground: #121212;
+  --sidebar-accent: #242424;
+  --sidebar-accent-foreground: #f5f5f2;
+  --sidebar-border: #2a2a2a;
+  --sidebar-ring: #3ae8ff;
+  --claude: #ff9bd2;
+  --claude-foreground: #121212;
+  --highlighter: #3ae8ff;
+  --highlighter-foreground: #121212;
+  --mascot-body-top: #a6f6ff;
+  --mascot-body-middle: #3ae8ff;
+  --mascot-body-bottom: #14b8d4;
+  --mascot-eye-top: #3a3a3a;
+  --mascot-eye-bottom: #0a0a0a;
+  --mascot-lid: #121212;
+  /* Failed eyes: ink on the highlighter bubble, where bubblegum would barely show. */
+  --mascot-failed: #121212;
+  --mascot-rim: rgb(255 255 255 / 0.8);
+  --mascot-catchlight: rgb(255 255 255 / 0.8);
+  --mascot-shadow: drop-shadow(0 10px 22px rgb(58 232 255 / 0.28));
+  --agent-claude: #d97757;
+  --agent-claude-tile: #2b1f1a;
+  --elevation-card: 0 12px 32px -12px rgb(0 0 0 / 0.6);
+  --elevation-float:
+    0 0 0 1px var(--border), 0 20px 40px -24px rgb(0 0 0 / 0.6);
+  --elevation-primary: 0 10px 28px -12px rgb(58 232 255 / 0.5);
+  --bubble-user: #2a2a2a;
+  /* On ink, highlighter is the terminal's yellow and its cursor; bubblegum its magenta. */
+  --terminal-ansi-0: #2a2a2a;
+  --terminal-ansi-1: #f97066;
+  --terminal-ansi-2: #7fd88f;
+  --terminal-ansi-3: #3ae8ff;
+  --terminal-ansi-4: #7aa7ff;
+  --terminal-ansi-5: #ff9bd2;
+  --terminal-ansi-6: #6fd6e0;
+  --terminal-ansi-7: #d4d4d0;
+  --terminal-ansi-8: #6b6b6b;
+  --terminal-ansi-9: #ff8a80;
+  --terminal-ansi-10: #9be6a8;
+  --terminal-ansi-11: #f2ff8a;
+  --terminal-ansi-12: #9dbdff;
+  --terminal-ansi-13: #ffb8de;
+  --terminal-ansi-14: #95e4eb;
+  --terminal-ansi-15: #f5f5f2;
+  --terminal-cursor: #3ae8ff;
+  /* On ink, highlighter marks what changed. */
+  --change-added: #7fd88f;
+  --change-modified: #3ae8ff;
+  --change-deleted: #f97066;
+  --terminal-selection: rgb(58 232 255 / 0.22);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans antialiased;
+  }
+  /* A desktop window, not a page: it never scrolls or rubber-bands as a whole. */
+  html,
+  body,
+  #root {
+    @apply h-full overflow-hidden overscroll-none;
+  }
+  /* App chrome isn't selectable text, as in native apps. Text meant for copying opts back in
+     with select-text; form fields stay selectable. */
+  body {
+    @apply bg-background text-foreground select-none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"] {
+    @apply select-text;
+  }
+}
+
+/* Fields show focus with their border alone, never a ring (owner, 2026-11-09): every
+   input, text area, select trigger and input group (which the combobox is built on).
+   Unlayered, so it wins over each component's ring utilities; their focus border stays. */
+:is(
+  input,
+  textarea,
+  select,
+  [data-slot="input-group"],
+  [data-slot="select-trigger"]
+):is(:focus, :focus-visible, :focus-within) {
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  outline: none;
+}
+
+/* The call transcript: LiveKit Agents UI's AgentChatTranscript, styled from outside through
+   its data-slot hooks (components/agents-ui stays as generated). Like the Paper board
+   "In use / the conversation": Boomy speaks in highlighter with ink text, the user in
+   ink. Bubblegum is kept for Claude's own messages. Unlayered, so it wins over the
+   component's utility classes. */
+.call-transcript [data-slot="message-scroller-content"] {
+  margin-inline: auto;
+  max-width: 42rem;
+  padding: 1.5rem 1.5rem 2rem;
+  gap: 0.75rem;
+}
+.call-transcript [data-slot="bubble"] > [data-slot="bubble-content"] {
+  border-radius: 1.25rem;
+  padding: 0.625rem 1rem;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  user-select: text;
+}
+.call-transcript
+  [data-slot="bubble"][data-align="start"]
+  > [data-slot="bubble-content"] {
+  background: var(--highlighter);
+  color: var(--highlighter-foreground);
+  border-bottom-left-radius: 0.375rem;
+}
+.call-transcript
+  [data-slot="bubble"][data-align="end"]
+  > [data-slot="bubble-content"] {
+  background: var(--bubble-user);
+  color: var(--background);
+  border-bottom-right-radius: 0.375rem;
+}
+.dark
+  .call-transcript
+  [data-slot="bubble"][data-align="end"]
+  > [data-slot="bubble-content"] {
+  color: var(--foreground);
+}
+.call-transcript [data-slot="bubble-content"] :is(p, ul, ol) {
+  margin: 0;
+}
+
+/* The call's control bar (Agents UI's AgentControlBar, as generated). LiveKit colours the
+   open transcript toggle blue; ours is a quiet grey press, like a selected sidebar row. */
+.call-controls [aria-label="Toggle transcript"][data-state="on"] {
+  background: var(--sidebar-accent);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+/* Agents UI pairs its mic toggle (36 px) with shadcn's select as the device menu, whose
+   trigger is 32 px in this style: it takes the toggle's height, so the two halves read as
+   one control. */
+.call-controls [data-slot="toggle"] ~ [data-slot="select-trigger"] {
+  height: calc(var(--spacing) * 9);
+}
+
+/* `SlidingName`: a long name slides between faded edges while highlighted or hovered.
+   `100cqw - 100%` is its overflow, zero when it fits; `--slide-ms` keeps the speed even. */
+[data-slot="sliding-name"] {
+  container-type: inline-size;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  /* A button centres its text; a name starts where its box does. */
+  text-align: start;
+  margin-inline-start: calc(var(--spacing) * -2);
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 0.5rem,
+    #000 calc(100% - 0.5rem),
+    transparent
+  );
+}
+[data-slot="sliding-name-text"] {
+  display: inline-block;
+  /* As wide as the fades, so the name's ends show clear of them. */
+  padding-inline: calc(var(--spacing) * 2);
+  white-space: nowrap;
+  transition: transform 300ms ease-out;
+}
+:is([data-highlighted], [data-sliding-names]:hover)
+  [data-slot="sliding-name-text"] {
+  transform: translateX(min(0px, calc(100cqw - 100%)));
+  transition-duration: var(--slide-ms, 0ms);
+  transition-timing-function: linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sliding-name-text"] {
+    transition: none;
+  }
+}
+
+/* A row of tabs that scrolls sideways without showing a scroll bar. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

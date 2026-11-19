@@ -1,0 +1,23 @@
+import { getCurrentWindow } from "@tauri-apps/api/window"
+
+import type { Task } from "@/features/call/tasks"
+import { call } from "@/lib/core"
+
+// The core's notifications (src-tauri/src/notifications.rs).
+
+type FinishedTask = Pick<Task, "agentName" | "session" | "task"> & {
+  projectId: number
+  status: "done" | "failed"
+}
+
+/** A task ended; the core notifies when no Boomy window is focused. */
+export function taskFinished(task: FinishedTask): Promise<void> {
+  return call("task_finished", { task })
+}
+
+/** A notification was clicked: show its project. Returns the unlisten. */
+export function onOpenProject(handler: (projectId: number) => void) {
+  return getCurrentWindow().listen<number>("open-project", (event) =>
+    handler(event.payload)
+  )
+}

@@ -1,0 +1,47 @@
+{
+  "goose": {
+    "step": "pick",
+    "problem": "Pick its model",
+    "fix": "goose configure",
+    "account": "Fake Pro",
+    "model": "Kimi K3.1 Pro",
+    "adapter": "codex-acp",
+    "skipped": [
+      {
+        "setting": "provider",
+        "name": "Provider",
+        "value": "p3",
+        "why": "refused"
+      }
+    ],
+    "session": true,
+    "settings": [
+      {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "kimi",
+        "options": [
+          {
+            "value": "kimi",
+            "name": "Kimi K3.1 Pro",
+            "group": "Kimi"
+          }
+        ]
+      }
+    ],
+    "keys": [
+      {
+        "name": "OPENROUTER_API_KEY",
+        "label": "OpenRouter API key",
+        "secret": false,
+        "optional": true
+      }
+    ],
+    "setup_files": [
+      "/Users/me/.config/goose/config.yaml"
+    ],
+    "timed_out": true,
+    "takes_keys": true
+  }
+}

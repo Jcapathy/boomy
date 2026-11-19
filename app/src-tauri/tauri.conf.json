@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Boomy",
+  "version": "0.3.3",
+  "identifier": "app.boomy.desktop",
+  "build": {
+    "beforeDevCommand": "bun --bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun --bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Boomy",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 820,
+        "minHeight": 560,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 30
+        },
+        "zoomHotkeysEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "requireSignedVersion": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/livekit-server"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "entitlements": "./Entitlements.plist",
+      "files": {
+        "Resources/agent": "../../agent/dist/bomby-agent",
+        "Resources/licenses/livekit-server.txt": "binaries/livekit-server-LICENSE.txt"
+      }
+    }
+  }
+}
