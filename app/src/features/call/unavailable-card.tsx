@@ -5,37 +5,45 @@ import { MascotCard } from "@/components/mascot-card"
 import { Button } from "@/components/ui/button"
 import { createStore, useStore } from "@/lib/store"
 
-// What the voice agent sets when the call has no memory (agent/memory.py).
-const ATTRIBUTE = "bomby.memory"
-
-// The call (its `startedAt`) whose card the user closed; outlives the call view, which
-// unmounts while the user looks at another project.
-const closedFor = createStore<number | null>(null)
-
-/** Whether the agent says this call can't reach its memory. */
-export function memoryUnavailable(attributes: Record<string, string>): boolean {
-  return attributes[ATTRIBUTE] === "unavailable"
+/** Whether the agent set `attribute` to say part of the call isn't available
+ * (agent/memory.py, agent/agent.py). */
+export function unavailable(
+  attributes: Record<string, string>,
+  attribute: string
+): boolean {
+  return attributes[attribute] === "unavailable"
 }
 
+// For each card, the call (its `startedAt`) whose card the user closed; outlives the call
+// view, which unmounts while the user looks at another project.
+const closedFor = createStore<Record<string, number>>({})
+
 /**
- * The card a call shows when Boomy can't reach its memory: the failed mascot, and the call
+ * The card a call shows when part of Boomy isn't available: the failed mascot, and the call
  * going on as usual. Once closed, it stays closed for the rest of the call.
  */
-export function MemoryUnavailable({
+export function UnavailableCard({
+  id,
   call,
-  unavailable,
+  shown,
+  headline,
+  detail,
   className,
 }: {
+  /** Which card, so closing one leaves the others. */
+  id: string
   /** The call's `startedAt`. */
   call: number
-  unavailable: boolean
+  shown: boolean
+  headline: string
+  detail: string
   className?: string
 }) {
-  const closed = useStore(closedFor) === call
+  const closed = useStore(closedFor)[id] === call
 
   return (
     <AnimatePresence>
-      {unavailable && !closed && (
+      {shown && !closed && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -45,15 +53,17 @@ export function MemoryUnavailable({
         >
           <MascotCard
             state="failed"
-            headline="I have no memory!"
-            detail="I can't reach it right now. The call works as usual."
+            headline={headline}
+            detail={detail}
             announce="status"
             action={
               <Button
                 variant="ghost"
                 size="icon-sm"
                 aria-label="Close"
-                onClick={() => closedFor.set(call)}
+                onClick={() =>
+                  closedFor.set({ ...closedFor.get(), [id]: call })
+                }
               >
                 <X />
               </Button>

@@ -78,6 +78,22 @@ def failure_line(service: str, said: str | None) -> str:
     return line if len(line) <= LINE_CHARS else line[: LINE_CHARS - 1] + "…"
 
 
+def out_of_quota(event: CloseEvent) -> bool:
+    """Whether the session closed because the voice model's service said a quota ran out.
+
+    Gemini's plugin raises the service's words (a 1011 "You exceeded your current quota")
+    as the error's cause and logs them without `lk.pii.error`, so they're read here from
+    the exception chain (`realtime_api.py`, `_main_task`, livekit-plugins-google 1.8.11)."""
+    if event.reason is not CloseReason.ERROR or event.error is None:
+        return False
+    error: BaseException | None = getattr(event.error, "error", None)
+    while error is not None:
+        if "exceeded your current quota" in str(error).lower():
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
 def report(
     event: CloseEvent,
     service: str,

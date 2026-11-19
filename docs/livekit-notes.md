@@ -83,7 +83,7 @@ Checked 2026-11-06 against `livekit-agents` 1.8.10 (`voice/agent_activity.py`, `
 
 ## Data to the frontend
 
-- Participant attributes carry current state. `bomby.tasks` (the call's tasks) and `bomby.memory` (`unavailable` when the call has no memory because Zep can't be reached) are set with `local_participant.set_attributes` and read through `useAgent().attributes`, which re-renders on changes. Total attribute limit: 64 KiB ([docs](https://docs.livekit.io/transport/data/state/participant-attributes)).
+- Participant attributes carry current state. `bomby.tasks` (the call's tasks) and `bomby.memory` (`unavailable` when the call has no memory because Zep can't be reached), `bomby.search` (`unavailable` when Gemini's Search quota ran out and the call went on without it) are set with `local_participant.set_attributes` and read through `useAgent().attributes`, which re-renders on changes. Total attribute limit: 64 KiB ([docs](https://docs.livekit.io/transport/data/state/participant-attributes)).
 - Text streams suit event messages, RPC request-response, and attributes or room metadata shared state ([docs](https://docs.livekit.io/transport/data/)).
 
 ## RPC

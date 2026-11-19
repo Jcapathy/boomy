@@ -12,10 +12,6 @@ import { useMemo, useState } from "react"
 import { AgentAudioVisualizerBar } from "@/components/agents-ui/agent-audio-visualizer-bar"
 import { AgentControlBar } from "@/components/agents-ui/agent-control-bar"
 import { Mascot, mascotState } from "@/components/mascot"
-import {
-  MemoryUnavailable,
-  memoryUnavailable,
-} from "@/features/memory/memory-unavailable"
 import { cn } from "@/lib/utils"
 
 import { agentStatus } from "./agent-status"
@@ -23,6 +19,7 @@ import type { ActiveCall } from "./call-provider"
 import { reportDeviceError } from "./device-errors"
 import { SessionTranscript } from "./session-transcript"
 import { lineId } from "./transcript"
+import { UnavailableCard, unavailable } from "./unavailable-card"
 
 /** How the agent's visual moves between the middle and the top. */
 const MOVE = { type: "tween", ease: "easeOut", duration: 0.3 } as const
@@ -84,9 +81,20 @@ export function CallView({ call }: { call: ActiveCall }) {
       <AgentPresence compact={chatOpen} />
 
       <div className="absolute inset-x-6 bottom-0 z-20">
-        <MemoryUnavailable
+        <UnavailableCard
+          id="memory"
           call={call.startedAt}
-          unavailable={memoryUnavailable(agent.attributes)}
+          shown={unavailable(agent.attributes, "bomby.memory")}
+          headline="I have no memory!"
+          detail="I can't reach it right now. The call works as usual."
+          className="mx-auto mb-3 w-full max-w-sm"
+        />
+        <UnavailableCard
+          id="search"
+          call={call.startedAt}
+          shown={unavailable(agent.attributes, "bomby.search")}
+          headline="No Google Search this call"
+          detail="Gemini's Search quota ran out, so I can't look things up. Everything else works."
           className="mx-auto mb-3 w-full max-w-sm"
         />
         <AnimatePresence mode="wait">

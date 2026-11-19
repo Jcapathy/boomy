@@ -43,7 +43,7 @@ from sections import MARKDOWN, Style
 
 logger = logging.getLogger("bomby.memory")
 
-# Set on the agent's participant when the call has no memory (app: memory-unavailable.tsx).
+# Set on the agent's participant when the call has no memory (app: call-view.tsx).
 ATTRIBUTE = "bomby.memory"
 UNAVAILABLE = "unavailable"
 ASSISTANT_NAME = "Boomy"

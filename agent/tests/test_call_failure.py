@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from livekit.agents import CloseEvent, CloseReason
+from livekit.agents.llm import RealtimeModelError
 
 from call_failure import (
     ATTRIBUTE,
@@ -10,6 +11,7 @@ from call_failure import (
     RECENT_S,
     ServiceErrors,
     failure_line,
+    out_of_quota,
     report,
 )
 
@@ -83,3 +85,31 @@ def test_only_a_session_closed_by_an_error_is_reported() -> None:
     ]
     for reason in (CloseReason.USER_INITIATED, CloseReason.PARTICIPANT_DISCONNECTED):
         assert asyncio.run(scenario(reason)) == []
+
+
+def closed_on(error: Exception, reason: CloseReason = CloseReason.ERROR) -> CloseEvent:
+    return CloseEvent(
+        reason=reason,
+        error=RealtimeModelError(
+            timestamp=0.0, label="gemini", error=error, recoverable=False
+        ),
+    )
+
+
+def test_sees_a_quota_running_out_in_the_errors_cause() -> None:
+    # As Gemini's plugin raises it: its own error, caused by the service's 1011.
+    try:
+        try:
+            raise RuntimeError(
+                "1011 None. You exceeded your current quota, please check your plan"
+            )
+        except RuntimeError as cause:
+            raise ConnectionError("Failed to connect to Gemini Live") from cause
+    except ConnectionError as error:
+        assert out_of_quota(closed_on(error))
+        assert not out_of_quota(closed_on(error, CloseReason.USER_INITIATED))
+
+
+def test_other_failures_arent_quota() -> None:
+    assert not out_of_quota(closed_on(RuntimeError("1008 API key not valid")))
+    assert not out_of_quota(CloseEvent(reason=CloseReason.ERROR))

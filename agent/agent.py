@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from dataclasses import replace
 from typing import override
 
 from livekit import rtc
@@ -19,7 +20,8 @@ from acp_client.redaction import redact_logs, secrets_to_redact
 from acp_client.runner import CallRunners
 from acp_client.streams import StreamRecorder
 from call import Call
-from call_failure import ServiceErrors
+from call_failure import ATTRIBUTE as FAILURE_ATTRIBUTE
+from call_failure import ServiceErrors, failure_line, out_of_quota
 from call_failure import report as report_failure
 from call_options import CallOptions
 from extensions import CallExtensions
@@ -33,6 +35,11 @@ from task_board import REQUEST_METHOD, STOP_METHOD, TaskBoard
 from tools import ALL_TOOLS, MEMORY_TOOLS
 from voice_prompt import backend_instructions, local_zone, voice_instructions
 from voice_providers import Tools
+from voice_providers.gemini import GOOGLE_SEARCH
+
+# Set on the agent's participant when a call went on without Google Search because its
+# quota ran out (app: call-view.tsx). Its value is memory's: "unavailable".
+SEARCH_ATTRIBUTE = "bomby.search"
 
 dev_env.load()
 
@@ -226,35 +233,70 @@ async def entrypoint(ctx: JobContext) -> None:
     backend = backend_instructions(
         runners.project, options, runners.available, extensions=extensions
     )
-    model = options.provider.realtime_model(options.voice, options.options, backend)
-    session: AgentSession[Call] = AgentSession(userdata=call, llm=model)
-
-    # The voice model failing for good closes the session and leaves the agent in the room:
-    # the page is told why, and ends the call (`call_failure.py`).
-    def on_close(event: CloseEvent) -> None:
-        report_failure(event, options.provider.name, service_errors, publish)
-
-    _ = session.on("close", on_close)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-
-    if memory:
-        memory.attach(session)
-    assistant = Assistant(options, instructions, memory is not None, extensions.tools())
-    await session.start(agent=assistant, room=ctx.room)  # pyright: ignore[reportUnknownMemberType]
-
-    # Keeps a provider that closes quiet conversations open until the call ends.
-    keeping = asyncio.create_task(options.provider.keep_alive(model))
-
-    # Once it stops, the provider ends a quiet call on its own: the log says why.
-    def keeping_ended(task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and (error := task.exception()) is not None:
-            logger.warning("keeping the conversation open stopped: %r", error)
-
-    keeping.add_done_callback(keeping_ended)
+    # Each voice session's keep-alive, stopped when the call ends.
+    keeping: list[asyncio.Task[None]] = []
 
     async def stop_keeping() -> None:
-        _ = keeping.cancel()
+        for task in keeping:
+            _ = task.cancel()
 
     ctx.add_shutdown_callback(stop_keeping)
+
+    async def start_session(options: CallOptions) -> None:
+        model = options.provider.realtime_model(options.voice, options.options, backend)
+        session: AgentSession[Call] = AgentSession(userdata=call, llm=model)
+
+        # The voice model failing for good closes the session and leaves the agent in the
+        # room: the page is told why, and ends the call (`call_failure.py`). Gemini's
+        # Google Search has its own quota: when that's what ran out, the call starts over
+        # without it and the page says so.
+        def on_close(event: CloseEvent) -> None:
+            if options.options.get(GOOGLE_SEARCH) and out_of_quota(event):
+                logger.warning(
+                    "out of quota with Google Search on; going on without it"
+                )
+                fallback = replace(
+                    options,
+                    provider_options={**options.provider_options, GOOGLE_SEARCH: False},
+                )
+                restarting.append(asyncio.create_task(restart(fallback)))
+                return
+            report_failure(event, options.provider.name, service_errors, publish)
+
+        _ = session.on("close", on_close)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+        if memory:
+            memory.attach(session)
+        assistant = Assistant(
+            options, instructions, memory is not None, extensions.tools()
+        )
+        await session.start(agent=assistant, room=ctx.room)  # pyright: ignore[reportUnknownMemberType]
+
+        # Keeps a provider that closes quiet conversations open until the call ends.
+        task = asyncio.create_task(options.provider.keep_alive(model))
+
+        # Once it stops, the provider ends a quiet call on its own: the log says why.
+        def keeping_ended(task: asyncio.Task[None]) -> None:
+            if not task.cancelled() and (error := task.exception()) is not None:
+                logger.warning("keeping the conversation open stopped: %r", error)
+
+        task.add_done_callback(keeping_ended)
+        keeping.append(task)
+
+    # Held so the restart isn't collected while it runs.
+    restarting: list[asyncio.Task[None]] = []
+
+    async def restart(options: CallOptions) -> None:
+        try:
+            await publish({SEARCH_ATTRIBUTE: UNAVAILABLE})
+            await start_session(options)
+        except Exception:
+            logger.exception("couldn't start the call again without Google Search")
+            await publish(
+                {FAILURE_ATTRIBUTE: failure_line(options.provider.name, None)}
+            )
+
+    await start_session(options)
 
 
 def main() -> None:
