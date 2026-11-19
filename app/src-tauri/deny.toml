@@ -8,7 +8,11 @@ targets = ["aarch64-apple-darwin"]
 [advisories]
 # RustSec advisories (vulnerable, unmaintained, unsound) and yanked versions fail the check.
 # Ignore one only with its id and why, after reading it.
-ignore = []
+ignore = [
+    # chrono is unmaintained (informational, no vulnerability). LiveKit's crates depend on it
+    # (pbjson-types), so the core can't drop it alone: revisit when livekit-api moves off it.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained only; required through livekit-api" },
+]
 
 [licenses]
 # Permissive licenses, plus MPL-2.0 (cssparser and selectors, through Tauri), whose

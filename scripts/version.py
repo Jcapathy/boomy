@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.13"
 # ///
-"""Bomby's one version number, in every place that has to carry it.
+"""Boomy's one version number, in every place that has to carry it.
 
 `app/src-tauri/tauri.conf.json` is the source: Tauri builds the app's version from it and the
 Release workflow names the release after it. The others can't read it, so they hold a copy:
@@ -56,7 +56,7 @@ def in_line(pattern: re.Pattern[str], path: Path) -> str | None:
 # Where each copy is, and how to read it.
 COPIES: dict[str, Callable[[], str | None]] = {
     "app/src-tauri/Cargo.toml": lambda: toml(CARGO_TOML)["package"]["version"],
-    "app/src-tauri/Cargo.lock": lambda: locked(CARGO_LOCK, "bomby"),
+    "app/src-tauri/Cargo.lock": lambda: locked(CARGO_LOCK, "boomy"),
     "agent/pyproject.toml": lambda: toml(PYPROJECT)["project"]["version"],
     "agent/uv.lock": lambda: locked(UV_LOCK, "bomby-agent"),
     "agent/acp_client/client.py (CLIENT_INFO)": lambda: in_line(CLIENT_LINE, CLIENT),
