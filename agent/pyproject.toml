@@ -1,6 +1,6 @@
 [project]
 name = "bomby-agent"
-version = "0.3.4"
+version = "0.3.5"
 description = "Boomy's voice agent: LiveKit with Gemini 3.8 Live, OpenAI GPT-Live or Rime Prism, running agents (Claude Code first) over ACP in the background"
 authors = [
     { name = "Ahmed Aburady", email = "accounts@aburady.com" }
