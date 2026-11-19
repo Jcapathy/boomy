@@ -78,10 +78,10 @@ def check() -> int:
 
 
 def rewrite(path: Path, pattern: re.Pattern[str], version: str) -> None:
-    text, count = pattern.subn(lambda m: f"{m.group(1)}{version}{m.group(3)}", path.read_text(), count=1)
+    text, count = pattern.subn(lambda m: f"{m.group(1)}{version}{m.group(3)}", path.read_text(encoding="utf-8"), count=1)
     if count != 1:
         sys.exit(f"{path.relative_to(ROOT)}: the version line isn't where version.py looks for it")
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def set_version(version: str) -> int:
