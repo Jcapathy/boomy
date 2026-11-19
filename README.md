@@ -40,7 +40,7 @@ Boomy is a Windows port of [Bomby](https://github.com/bomby-app/bomby), an MIT-l
 - **See the work as it happens.** Beside a project, panels show its git changes, its files, PowerShell terminals of your own and the project's to-dos.
 - **Pick up where you left off.** Every call is saved with its transcript, to read back or resume. Turn on memory and Boomy remembers you across calls, in your own [Zep](https://www.getzep.com) project.
 - **Extensions.** Connect Zapier or Composio and the voice can act on your other tools during a call.
-- **Out of your way.** Boomy lives in the system tray: start or end a call from there, and closing the window keeps the call going.
+- **Out of your way.** Boomy lives in the system tray: start or end a call from there, and closing the window keeps the call going. Opening Boomy again brings back its window instead of starting a second copy.
 
 ## How it works
 

@@ -131,6 +131,13 @@ fn launch_failed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, error: &str) {
 
 pub fn run() {
     let builder = tauri::Builder::default();
+    // One Boomy at a time: a second launch shows the running one's window and quits, so two
+    // never share the database, keys and call server. Registered first, as the plugin asks.
+    // Release builds only, so a dev build still runs beside the installed app.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        let _ = windows::show_main(app);
+    }));
     // Only release builds update (updates.rs), so only they load the updater, which won't
     // start without plugins.updater in tauri.conf.json.
     #[cfg(not(debug_assertions))]

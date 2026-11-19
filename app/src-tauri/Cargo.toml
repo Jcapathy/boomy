@@ -48,6 +48,7 @@ zip = { version = "9.4.2", default-features = false, features = ["deflate-flate2
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 regex = "1.13.1"
 aho-corasick = "1.1.5"
+tauri-plugin-single-instance = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
